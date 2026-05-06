@@ -6,8 +6,6 @@ from shared.es_client import get_client
 from shared.indexer import bulk_index
 from catalog import generate_catalog, create_index
 
-client = TestClient(app)
-
 KNOWN_ITEMS = [
     {
         "item_id": "test_search_001",
@@ -37,9 +35,15 @@ KNOWN_ITEMS = [
 
 
 @pytest.fixture(scope="module")
-def es_with_test_data():
+def client():
     if not os.getenv("ES_URL"):
         pytest.skip("ES_URL not set")
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture(scope="module")
+def es_with_test_data(client):
     es = get_client()
     create_index(es)
     bulk_index(es, "catalog", KNOWN_ITEMS)
@@ -53,7 +57,7 @@ def es_with_test_data():
     )
 
 
-def test_search_response_shape(es_with_test_data):
+def test_search_response_shape(client, es_with_test_data):
     resp = client.get("/search?q=headphones")
     assert resp.status_code == 200
     data = resp.json()
@@ -65,7 +69,7 @@ def test_search_response_shape(es_with_test_data):
     assert isinstance(data["results"], list)
 
 
-def test_search_result_fields(es_with_test_data):
+def test_search_result_fields(client, es_with_test_data):
     resp = client.get("/search?q=headphones")
     data = resp.json()
     assert len(data["results"]) > 0
@@ -74,7 +78,7 @@ def test_search_result_fields(es_with_test_data):
         assert field in first, f"Missing field: {field}"
 
 
-def test_relevant_result_ranks_high(es_with_test_data):
+def test_relevant_result_ranks_high(client, es_with_test_data):
     resp = client.get("/search?q=wireless headphones")
     data = resp.json()
     titles = [r["title"] for r in data["results"]]
@@ -82,7 +86,7 @@ def test_relevant_result_ranks_high(es_with_test_data):
         "Expected headphones result in top 3"
 
 
-def test_pagination_no_overlap(es_with_test_data):
+def test_pagination_no_overlap(client, es_with_test_data):
     page1 = client.get("/search?q=shoes&page=1&page_size=5").json()
     page2 = client.get("/search?q=shoes&page=2&page_size=5").json()
     ids1 = {r["item_id"] for r in page1["results"]}
@@ -90,18 +94,18 @@ def test_pagination_no_overlap(es_with_test_data):
     assert ids1.isdisjoint(ids2), "Pages should not share results"
 
 
-def test_pagination_total_consistent(es_with_test_data):
+def test_pagination_total_consistent(client, es_with_test_data):
     page1 = client.get("/search?q=sony&page=1&page_size=3").json()
     page2 = client.get("/search?q=sony&page=2&page_size=3").json()
     assert page1["total"] == page2["total"]
 
 
-def test_cors_headers(es_with_test_data):
+def test_cors_headers(client, es_with_test_data):
     resp = client.get("/search?q=test", headers={"Origin": "http://localhost:3000"})
     assert "access-control-allow-origin" in resp.headers
 
 
-def test_empty_query_still_responds(es_with_test_data):
+def test_empty_query_still_responds(client, es_with_test_data):
     resp = client.get("/search?q=xyznonexistentproduct123")
     assert resp.status_code == 200
     assert resp.json()["total"] == 0
