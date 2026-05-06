@@ -67,7 +67,7 @@ def simulate_session(es, query: str, popular_items: set, n_results: int = 10) ->
             "clicked": clicked,
             "bm25_score": bm25_score,
         })
-    
+    return events
 
 
 def run_simulation(es, n_sessions: int = 500) -> list[dict]:
