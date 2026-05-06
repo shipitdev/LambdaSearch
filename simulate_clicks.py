@@ -84,6 +84,7 @@ def save_click_log(events: list[dict], path: str = "data/click_log.json") -> Non
     os.makedirs("data", exist_ok=True)
     with open(path, "w") as f:
         json.dump(events, f, indent=2)
+    print(f"Saved {len(events)} click events to {path}.")
 
 
 if __name__ == "__main__":
