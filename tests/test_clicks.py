@@ -51,3 +51,16 @@ def test_popular_items_higher_ctr():
         other_ctr = other_clicks / other_shown
         assert popular_ctr >= other_ctr, "Popular items should have CTR >= non-popular at same rank"
 
+
+@pytest.mark.skipif(not os.getenv("ES_URL"), reason="ES_URL not set")
+def test_click_log_schema():
+    es = get_client()
+    popular_items = load_popular_items() if os.path.exists("data/catalog.json") else set()
+    events = simulate_session(es, "running shoes", popular_items)
+    assert len(events) > 0
+    for e in events:
+        assert isinstance(e["query"], str)
+        assert isinstance(e["position"], int)
+        assert isinstance(e["clicked"], bool)
+        assert isinstance(e["bm25_score"], float)
+        assert 0 <= e["position"] < 10
