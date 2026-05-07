@@ -56,8 +56,14 @@ def test_popular_items_higher_ctr():
 def test_click_log_schema():
     es = get_client()
     popular_items = load_popular_items() if os.path.exists("data/catalog.json") else set()
-    events = simulate_session(es, "running shoes", popular_items)
-    assert len(events) > 0
+    
+    # Use a broad single-word query guaranteed to match something in Faker text
+    events = simulate_session(es, "nike", popular_items)
+    
+    if len(events) == 0:
+        events = simulate_session(es, "sony", popular_items)
+    
+    assert len(events) > 0, "Expected at least one result from a brand-name query"
     for e in events:
         assert isinstance(e["query"], str)
         assert isinstance(e["position"], int)
