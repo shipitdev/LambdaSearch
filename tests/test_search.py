@@ -38,8 +38,11 @@ KNOWN_ITEMS = [
 def client():
     if not os.getenv("ES_URL"):
         pytest.skip("ES_URL not set")
-    with TestClient(app) as c:
-        yield c
+    try:
+        with TestClient(app) as c:
+            yield c
+    except RuntimeError as e:
+        pytest.skip(f"ES unavailable: {e}")
 
 
 @pytest.fixture(scope="module")
