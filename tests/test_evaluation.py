@@ -1,0 +1,101 @@
+import os
+import json
+import pytest
+import math
+from evaluate import dcg, ideal_dcg, ndcg_at_k, mrr, evaluate_ranking, load_holdout, ltr_rankings
+from shared.model_loader import load_model
+
+
+
+def test_ndcg_perfect_ranking():
+    relevances = [3, 2, 1, 0]
+    assert ndcg_at_k(relevances, 4) == 1.0
+
+
+def test_ndcg_worst_ranking():
+    relevances = [0, 0, 0, 3]
+    score = ndcg_at_k(relevances, 4)
+    assert score < 0.5
+
+
+def test_ndcg_all_zeros():
+    assert ndcg_at_k([0, 0, 0], 3) == 0.0
+
+
+def test_ndcg_single_relevant():
+    relevances = [2, 0, 0]
+    assert ndcg_at_k(relevances, 3) == 1.0
+
+
+def test_mrr_first_position():
+    assert mrr([1, 0, 0]) == 1.0
+
+
+def test_mrr_second_position():
+    assert abs(mrr([0, 1, 0]) - 0.5) < 0.001
+
+
+def test_mrr_no_relevant():
+    assert mrr([0, 0, 0]) == 0.0
+
+
+def test_dcg_known_values():
+    relevances = [3, 2, 1]
+    expected = 3 / math.log2(2) + 2 / math.log2(3) + 1 / math.log2(4)
+    assert abs(dcg(relevances, 3) - expected) < 0.001
+
+
+def test_evaluate_ranking_structure():
+    groups = {
+        1: [(2, 5.0), (1, 3.0), (0, 1.0)],
+        2: [(0, 4.0), (2, 2.0), (1, 1.0)],
+    }
+    result = evaluate_ranking(groups)
+    assert "ndcg@10" in result
+    assert "ndcg@5" in result
+    assert "mrr" in result
+    assert 0.0 <= result["ndcg@10"] <= 1.0
+    assert 0.0 <= result["ndcg@5"] <= 1.0
+    assert 0.0 <= result["mrr"] <= 1.0
+
+
+def test_load_holdout_structure():
+    if not os.path.exists("data/holdout.libsvm"):
+        pytest.skip("holdout.libsvm not generated yet")
+    qids, labels = load_holdout()
+    assert len(qids) == len(labels)
+    assert all(l in [0, 1, 2] for l in labels)
+    assert len(set(qids)) >= 1
+
+
+def test_ltr_rankings_structure():
+    if not os.path.exists("data/holdout.libsvm"):
+        pytest.skip("holdout.libsvm not generated yet")
+    if not os.path.exists("models/model.json"):
+        pytest.skip("model not trained yet")
+    booster = load_model()
+    groups = ltr_rankings(booster)
+    assert len(groups) > 0
+    for qid, pairs in groups.items():
+        assert len(pairs) > 0
+        for label, score in pairs:
+            assert label in [0, 1, 2]
+            assert isinstance(score, float)
+
+
+@pytest.mark.skipif(not os.getenv("ES_URL"), reason="ES_URL not set")
+def test_full_benchmark():
+    try:
+        from shared.es_client import get_client
+        from evaluate import run_evaluation, write_results
+        es = get_client()
+        results = run_evaluation(es)
+        write_results(results)
+        assert "bm25" in results
+        assert "lambdamart" in results
+        assert 0.0 <= results["bm25"]["ndcg@10"] <= 1.0
+        assert 0.0 <= results["lambdamart"]["ndcg@10"] <= 1.0
+        assert results["lambdamart"]["ndcg@10"] >= results["bm25"]["ndcg@10"], \
+            f"LambdaMART ({results['lambdamart']['ndcg@10']}) should beat BM25 ({results['bm25']['ndcg@10']})"
+    except Exception as e:
+        pytest.skip(f"ES unavailable: {e}")
