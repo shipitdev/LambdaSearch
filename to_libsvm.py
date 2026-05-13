@@ -11,13 +11,22 @@ def load_click_log(path: str = "data/click_log.json") -> list[dict]:
 
 
 def compute_labels(click_log: list[dict]) -> dict:
+    """
+    Graded relevance labels:
+    - clicked at position 0-2: label 3 (highly relevant)
+    - clicked at position 3+:  label 2 (relevant)
+    - shown but not clicked:   label 1 (seen, not wanted)
+    - not shown:               label 0
+    """
     labels = {}
     for event in click_log:
         key = (event["query"], event["item_id"])
         if event["clicked"]:
-            labels[key] = 2
-        elif key not in labels:
-            labels[key] = 1
+            new_label = 3 if event["position"] <= 2 else 2
+        else:
+            new_label = 1
+        # keep highest label if item appears multiple times
+        labels[key] = max(labels.get(key, 0), new_label)
     return labels
 
 
