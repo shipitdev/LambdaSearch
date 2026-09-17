@@ -1,7 +1,7 @@
 """Elasticsearch request builders for the ranking lab's retrieval stages."""
 
 SEARCH_MODES = frozenset({"bm25", "semantic", "hybrid", "ltr"})
-TEXT_QUERY = {"multi_match": {"fields": ["title^2", "description", "search_text"]}}
+TEXT_QUERY = {"multi_match": {"fields": ["title^2", "description"]}}
 
 
 def _lexical(query: str) -> dict:

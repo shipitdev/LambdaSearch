@@ -6,7 +6,7 @@ from shared.search import build_search_request
 def test_bm25_request_uses_lexical_fields():
     request = build_search_request("wireless headphones", "bm25", 10, 0)
 
-    assert request["query"]["multi_match"]["fields"] == ["title^2", "description", "search_text"]
+    assert request["query"]["multi_match"]["fields"] == ["title^2", "description"]
 
 
 def test_semantic_request_uses_semantic_text_field():
