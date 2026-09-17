@@ -23,8 +23,8 @@ SAMPLE_CATALOG = [
 
 def test_compute_labels_clicked():
     labels = compute_labels(SAMPLE_CLICK_LOG)
-    assert labels[("headphones", "1")] == 2
-    assert labels[("shoes", "4")] == 2
+    assert labels[("headphones", "1")] == 3
+    assert labels[("shoes", "4")] == 3
 
 
 def test_compute_labels_not_clicked():

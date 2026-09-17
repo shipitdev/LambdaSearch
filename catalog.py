@@ -20,6 +20,17 @@ CATALOG_MAPPING = {
     }
 }
 
+
+def build_catalog_mapping(inference_id: str | None = None) -> dict:
+    """Use explicit Elastic inference for semantic search, with a BM25-only fallback."""
+    mapping = json.loads(json.dumps(CATALOG_MAPPING))
+    if inference_id:
+        mapping["mappings"]["properties"]["search_text"] = {
+            "type": "semantic_text",
+            "inference_id": inference_id,
+        }
+    return mapping
+
 def generate_item(item_id: int) -> dict:
     return generate_products(item_id + 1)[item_id]
 
@@ -30,7 +41,7 @@ def create_index(es) -> None:
     if es.indices.exists(index="catalog"):
         print("Index 'catalog' already exists. skipping creating it.")
         return
-    es.indices.create(index="catalog", body=CATALOG_MAPPING)
+    es.indices.create(index="catalog", body=build_catalog_mapping(os.getenv("ELASTIC_INFERENCE_ID")))
     print('Index "catalog" created successfully.')
 
 def save_catalog(items: list[dict], path: str="data/catalog.json") -> None:

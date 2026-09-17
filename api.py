@@ -1,53 +1,75 @@
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI,Query
+from typing import Literal
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from shared.es_client import get_client, check_connection
+
+from catalog import load_catalog
+from shared.es_client import check_connection, get_client
+from shared.features import compute_category_stats
+from shared.model_loader import load_model
+from shared.reranking import rerank_hits
+from shared.search import build_search_request
 
 es = None
+category_stats = None
+Mode = Literal["bm25", "semantic", "hybrid", "ltr"]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global es
+    global es, category_stats
     es = get_client()
     if not check_connection(es):
-        raise RuntimeError("Cannot establish a connection to ElasticSearch")
+        raise RuntimeError("Cannot establish a connection to Elasticsearch")
+    category_stats = compute_category_stats(load_catalog())
     yield
 
-app = FastAPI(title="LambdaSearch", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="LaMDaSearch Ranking Lab", lifespan=lifespan)
+origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",") if origin.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET"], allow_headers=["*"])
+
+
+@app.get("/health")
+def health():
+    if es is None:
+        raise HTTPException(status_code=503, detail="Search backend unavailable")
+    return {"status": "ok"}
+
+
+def _rerank(query: str, hits: list[dict]) -> list[dict]:
+    try:
+        import xgboost as xgb
+
+        model = load_model()
+        return rerank_hits(query, hits, category_stats, lambda rows: model.predict(xgb.DMatrix(rows)))
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=503, detail="LTR model is not available") from error
+
 
 @app.get("/search")
 def search(
-    q: str = Query(...,description="search query"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(10, ge=1,le=50),
+    q: str = Query(..., min_length=1, max_length=256, description="Search query"),
+    mode: Mode = "bm25",
+    page: int = Query(1, ge=1, le=100),
+    page_size: int = Query(10, ge=1, le=50),
 ):
-    from_ = (page - 1) * page_size
+    if es is None:
+        raise HTTPException(status_code=503, detail="Search backend unavailable")
+    try:
+        response = es.search(
+            index="catalog",
+            body=build_search_request(q, mode, page_size, (page - 1) * page_size),
+            request_timeout=5,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Search backend unavailable") from error
 
-    resp = es.search(
-        index="catalog",
-        body = {
-            "from" : from_,
-            "size" : page_size,
-            "query" : {
-                "multi_match": {
-                    "query": q,
-                    "fields": ["title^2","description"],
-                }
-            }
-        }
-    )
-    
-    hits = resp["hits"]["hits"]
-    total = resp["hits"]["total"]["value"]
-
+    hits = response["hits"]["hits"]
+    if mode == "ltr":
+        hits = _rerank(q, hits)
     results = [
         {
             "item_id": hit["_source"].get("item_id"),
@@ -59,12 +81,4 @@ def search(
         }
         for hit in hits
     ]
-    
-    return {
-        "query": q,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "results": results,
-
-    }
+    return {"query": q, "mode": mode, "total": response["hits"]["total"]["value"], "page": page, "page_size": page_size, "results": results}

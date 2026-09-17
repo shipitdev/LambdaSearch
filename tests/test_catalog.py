@@ -1,7 +1,7 @@
 import json
 import os
 import pytest
-from catalog import generate_catalog, generate_item, load_catalog, create_index
+from catalog import build_catalog_mapping, generate_catalog, generate_item, load_catalog, create_index
 from shared.es_client import get_client
 from shared.indexer import bulk_index
 
@@ -40,6 +40,12 @@ def test_deterministic_with_seed():
     items_b = generate_catalog(10)
     assert items_a[0]["title"] == items_b[0]["title"]
     assert items_a[0]["price"] == items_b[0]["price"]
+
+
+def test_catalog_mapping_uses_explicit_semantic_inference_id():
+    mapping = build_catalog_mapping("ranking-lab-e5")
+    field = mapping["mappings"]["properties"]["search_text"]
+    assert field == {"type": "semantic_text", "inference_id": "ranking-lab-e5"}
 
 
 @pytest.mark.skipif(os.getenv("RUN_ES_TESTS") != "1", reason="set RUN_ES_TESTS=1 to run Elastic integration tests")
