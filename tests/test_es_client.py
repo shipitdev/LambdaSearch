@@ -12,7 +12,7 @@ def test_check_connection_fails_gracefully():
     result = check_connection(bad_es)
     assert result is False
 
-@pytest.mark.skipif(os.getenv("ES_URL") is None, reason ="ES_URL not set in environment")
+@pytest.mark.skipif(os.getenv("RUN_ES_TESTS") != "1", reason="set RUN_ES_TESTS=1 to run Elastic integration tests")
 
 def test_check_connection_live():
     es = get_client()

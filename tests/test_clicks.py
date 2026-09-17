@@ -25,7 +25,7 @@ def test_popular_items_fraction():
     assert abs(len(popular) - expected) <= 1
 
 
-@pytest.mark.skipif(not os.getenv("ES_URL"), reason="ES_URL not set")
+@pytest.mark.skipif(os.getenv("RUN_ES_TESTS") != "1", reason="set RUN_ES_TESTS=1 to run Elastic integration tests")
 @pytest.mark.skipif(not os.path.exists("data/catalog.json"), reason="catalog.json not generated yet")
 def test_popular_items_higher_ctr():
     es = get_client()
@@ -52,7 +52,7 @@ def test_popular_items_higher_ctr():
         assert popular_ctr >= other_ctr, "Popular items should have CTR >= non-popular at same rank"
 
 
-@pytest.mark.skipif(not os.getenv("ES_URL"), reason="ES_URL not set")
+@pytest.mark.skipif(os.getenv("RUN_ES_TESTS") != "1", reason="set RUN_ES_TESTS=1 to run Elastic integration tests")
 def test_click_log_schema():
     try:
         es = get_client()

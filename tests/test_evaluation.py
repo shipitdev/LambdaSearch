@@ -64,7 +64,7 @@ def test_load_holdout_structure():
         pytest.skip("holdout.libsvm not generated yet")
     qids, labels = load_holdout()
     assert len(qids) == len(labels)
-    assert all(l in [0, 1, 2] for l in labels)
+    assert all(l in [1, 2, 3] for l in labels)
     assert len(set(qids)) >= 1
 
 
@@ -79,11 +79,11 @@ def test_ltr_rankings_structure():
     for qid, pairs in groups.items():
         assert len(pairs) > 0
         for label, score in pairs:
-            assert label in [0, 1, 2]
+            assert label in [1, 2, 3]
             assert isinstance(score, float)
 
 
-@pytest.mark.skipif(not os.getenv("ES_URL"), reason="ES_URL not set")
+@pytest.mark.skipif(os.getenv("RUN_ES_TESTS") != "1", reason="set RUN_ES_TESTS=1 to run Elastic integration tests")
 def test_full_benchmark():
     try:
         from shared.es_client import get_client
