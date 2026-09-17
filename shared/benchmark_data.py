@@ -75,31 +75,39 @@ def _query_cases(products: list[dict]) -> list[dict]:
     cases = []
     for product_type, matches in by_type.items():
         representative = matches[0]
-        brand = representative["brand"]
-        attribute = representative["attributes"][0]
-        use_case = representative["use_cases"][0]
-        cases.extend(
-            (
+        for brand in BRANDS:
+            for query in (f"{brand} {product_type}", f"{product_type} by {brand}", f"best {brand} {product_type}"):
+                cases.append(
                 _case(
-                    f"{brand} {product_type}",
+                    query,
                     "lexical",
                     products,
                     lambda p, product_type=product_type, brand=brand: 3 if p["product_type"] == product_type and p["brand"] == brand else (2 if p["product_type"] == product_type else 0),
-                ),
+                ))
+        for attribute in representative["attributes"]:
+            for brand in BRANDS:
+                for query in (f"{brand} {attribute} {product_type}", f"{attribute} {product_type} from {brand}", f"best {brand} {attribute} {product_type}"):
+                    cases.append(_case(
+                        query,
+                        "attribute",
+                        products,
+                        lambda p, product_type=product_type, attribute=attribute, brand=brand: 3 if p["product_type"] == product_type and p["brand"] == brand and attribute in p["attributes"] else (2 if p["product_type"] == product_type and attribute in p["attributes"] else 0),
+                    ))
+        for use_case in representative["use_cases"]:
+            for query in (
+                f"I need a {product_type} for {use_case}", f"what {product_type} works for {use_case}",
+                f"recommend gear for {use_case}: {product_type}", f"help me choose a {product_type} for {use_case}",
+                f"good {product_type} for {use_case}", f"which {product_type} suits {use_case}",
+                f"shopping for {use_case} with a {product_type}", f"find a {product_type} for {use_case}",
+                f"I want to use a {product_type} for {use_case}", f"best option for {use_case}: {product_type}",
+            ):
+                cases.append(
                 _case(
-                    f"{attribute} {product_type}",
-                    "attribute",
-                    products,
-                    lambda p, product_type=product_type, attribute=attribute: 3 if p["product_type"] == product_type and attribute in p["attributes"] else (2 if p["product_type"] == product_type else 0),
-                ),
-                _case(
-                    f"something for {use_case}",
+                    query,
                     "semantic",
                     products,
-                    lambda p, use_case=use_case: 3 if use_case in p["use_cases"] else 0,
-                ),
-            )
-        )
+                    lambda p, product_type=product_type, use_case=use_case: 3 if p["product_type"] == product_type and use_case in p["use_cases"] else (2 if use_case in p["use_cases"] else 0),
+                ))
     return cases
 
 
@@ -113,7 +121,7 @@ def build_benchmark(products: list[dict], seed: int = 42, queries_per_cohort: in
     splits = {"train": [], "dev": [], "test": []}
     for cohort, cases in cases_by_cohort.items():
         rng.shuffle(cases)
-        selected = cases[: min(queries_per_cohort, len(cases))]
+        selected = cases[: min(queries_per_cohort * 4, len(cases))]
         train_end = max(1, len(selected) // 2)
         dev_end = min(len(selected) - 1, max(train_end, (len(selected) * 3) // 4))
         splits["train"].extend(selected[:train_end])

@@ -29,3 +29,12 @@ def test_judgments_come_from_product_metadata_not_retrieval_order():
     assert case["judgments"]
     assert set(case["judgments"].values()) <= {1, 2, 3}
     assert "rank" not in case
+
+
+def test_default_benchmark_has_fifty_held_out_queries_per_cohort():
+    benchmark = build_benchmark(generate_products(), seed=42)
+
+    cohorts = [case["cohort"] for case in benchmark["test"]]
+    assert cohorts.count("lexical") == 50
+    assert cohorts.count("attribute") == 50
+    assert cohorts.count("semantic") == 50
