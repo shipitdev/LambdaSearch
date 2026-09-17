@@ -42,7 +42,7 @@ def test_deterministic_with_seed():
     assert items_a[0]["price"] == items_b[0]["price"]
 
 
-@pytest.mark.skipif(not os.getenv("ES_URL"), reason="ES_URL not set")
+@pytest.mark.skipif(os.getenv("RUN_ES_TESTS") != "1", reason="set RUN_ES_TESTS=1 to run Elastic integration tests")
 def test_bulk_index_and_retrieve():
     es = get_client()
     test_items = generate_catalog(10)
