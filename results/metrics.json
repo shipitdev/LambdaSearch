@@ -1,12 +1,127 @@
 {
   "bm25": {
-    "ndcg@10": 1.0,
-    "ndcg@5": 1.0,
-    "mrr": 1.0
+    "ndcg@10": 0.9084,
+    "ndcg@5": 0.9026,
+    "mrr": 0.9683,
+    "recall@100": 0.3737
   },
-  "lambdamart": {
-    "ndcg@10": 0.8205,
-    "ndcg@5": 0.8205,
-    "mrr": 1.0
+  "semantic": {
+    "ndcg@10": 0.9939,
+    "ndcg@5": 0.9934,
+    "mrr": 0.9956,
+    "recall@100": 0.3581
+  },
+  "hybrid": {
+    "ndcg@10": 0.9881,
+    "ndcg@5": 0.9907,
+    "mrr": 0.9947,
+    "recall@100": 0.3565
+  },
+  "ltr": {
+    "ndcg@10": 0.9931,
+    "ndcg@5": 0.9936,
+    "mrr": 0.9967,
+    "recall@100": 0.3565
+  },
+  "cohorts": {
+    "lexical": {
+      "bm25": {
+        "ndcg@10": 1.0,
+        "ndcg@5": 1.0,
+        "mrr": 1.0,
+        "recall@100": 0.3333
+      },
+      "semantic": {
+        "ndcg@10": 1.0,
+        "ndcg@5": 1.0,
+        "mrr": 1.0,
+        "recall@100": 0.2734
+      },
+      "hybrid": {
+        "ndcg@10": 1.0,
+        "ndcg@5": 1.0,
+        "mrr": 1.0,
+        "recall@100": 0.2982
+      },
+      "ltr": {
+        "ndcg@10": 1.0,
+        "ndcg@5": 1.0,
+        "mrr": 1.0,
+        "recall@100": 0.2982
+      }
+    },
+    "attribute": {
+      "bm25": {
+        "ndcg@10": 1.0,
+        "ndcg@5": 1.0,
+        "mrr": 1.0,
+        "recall@100": 0.4904
+      },
+      "semantic": {
+        "ndcg@10": 1.0,
+        "ndcg@5": 1.0,
+        "mrr": 1.0,
+        "recall@100": 0.4273
+      },
+      "hybrid": {
+        "ndcg@10": 1.0,
+        "ndcg@5": 1.0,
+        "mrr": 1.0,
+        "recall@100": 0.4353
+      },
+      "ltr": {
+        "ndcg@10": 1.0,
+        "ndcg@5": 1.0,
+        "mrr": 1.0,
+        "recall@100": 0.4353
+      }
+    },
+    "semantic": {
+      "bm25": {
+        "ndcg@10": 0.7253,
+        "ndcg@5": 0.7079,
+        "mrr": 0.905,
+        "recall@100": 0.2974
+      },
+      "semantic": {
+        "ndcg@10": 0.9817,
+        "ndcg@5": 0.9803,
+        "mrr": 0.9867,
+        "recall@100": 0.3737
+      },
+      "hybrid": {
+        "ndcg@10": 0.9644,
+        "ndcg@5": 0.972,
+        "mrr": 0.984,
+        "recall@100": 0.3361
+      },
+      "ltr": {
+        "ndcg@10": 0.9793,
+        "ndcg@5": 0.9809,
+        "mrr": 0.99,
+        "recall@100": 0.3361
+      }
+    }
+  },
+  "ltr_vs_strongest_baseline_ndcg@10": {
+    "baseline": "semantic",
+    "mean": -0.0007943171,
+    "lower": -0.0054215724,
+    "upper": 0.0028635374
+  },
+  "passed": false,
+  "queries": 150,
+  "provenance": {
+    "benchmark": "ranking-v1",
+    "seed": 42,
+    "inference_id": ".jina-embeddings-v5-text-small",
+    "model": {
+      "trained_at": "2026-09-19T01:07:12.690910+00:00",
+      "feature_schema": "ranking-v1",
+      "dataset": "ranking-v1",
+      "seed": 42,
+      "inference_id": ".jina-embeddings-v5-text-small",
+      "source_revision": "f4088b1f1bd991565ebf7f912e4c8040b7725ae1"
+    }
   }
 }

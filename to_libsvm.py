@@ -1,99 +1,64 @@
+"""Build LambdaMART rows from independent judgments and RRF candidates."""
+
+from __future__ import annotations
+
+import argparse
 import json
-import os
-import random
+from pathlib import Path
+
 from catalog import load_catalog
+from shared.benchmark_data import build_benchmark
 from shared.features import compute_category_stats, feature_vector
-
-
-def load_click_log(path: str = "data/click_log.json") -> list[dict]:
-    with open(path) as f:
-        return json.load(f)
-
-
-def compute_labels(click_log: list[dict]) -> dict:
-    """
-    Graded relevance labels:
-    - clicked at position 0-2: label 3 (highly relevant)
-    - clicked at position 3+:  label 2 (relevant)
-    - shown but not clicked:   label 1 (seen, not wanted)
-    - not shown:               label 0
-    """
-    labels = {}
-    for event in click_log:
-        key = (event["query"], event["item_id"])
-        if event["clicked"]:
-            new_label = 3 if event["position"] <= 2 else 2
-        else:
-            new_label = 1
-        # keep highest label if item appears multiple times
-        labels[key] = max(labels.get(key, 0), new_label)
-    return labels
+from shared.search import build_search_request
 
 
 def to_libsvm_row(label: int, qid: int, features: list[float]) -> str:
-    feat_str = " ".join(f"{i}:{v:.6f}" for i, v in enumerate(features))
-    return f"{label} qid:{qid} {feat_str}"
+    return f"{label} qid:{qid} " + " ".join(f"{index}:{value:.6f}" for index, value in enumerate(features))
 
 
-def build_dataset(click_log: list[dict], catalog: list[dict]) -> list[str]:
+def build_dataset(cases: list[dict], catalog: list[dict], retrieve) -> list[str]:
+    """Use only hybrid candidates; labels are supplied by the benchmark."""
     category_stats = compute_category_stats(catalog)
-    catalog_by_id = {item["item_id"]: item for item in catalog}
-    labels = compute_labels(click_log)
-
-    queries = list(dict.fromkeys(e["query"] for e in click_log))
-    query_to_qid = {q: i + 1 for i, q in enumerate(queries)}
-
     rows = []
-    for event in click_log:
-        key = (event["query"], event["item_id"])
-        label = labels.get(key, 1)
-        qid = query_to_qid[event["query"]]
-        item = catalog_by_id.get(event["item_id"])
-        if item is None:
-            continue
-        features = feature_vector(
-            event["query"], item, event["bm25_score"], category_stats
+    for qid, case in enumerate(cases, start=1):
+        for hit in retrieve(case["query"]):
+            item = hit["_source"]
+            label = case["judgments"].get(item.get("item_id"), 0)
+            rows.append(to_libsvm_row(label, qid, feature_vector(case["query"], item, hit.get("_score", 0.0), category_stats)))
+    return rows
+
+
+def write_dataset(rows: list[str], path: str | Path) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(rows) + "\n")
+
+
+def prepare_datasets(es, output_dir: str | Path = "data/ranking-v1", splits: tuple[str, ...] = ("train", "dev", "test")) -> Path:
+    """Retrieve candidates once and write query-disjoint train/dev/test files."""
+    catalog = load_catalog()
+    benchmark = build_benchmark(catalog)
+    output_dir = Path(output_dir)
+
+    def retrieve(query: str) -> list[dict]:
+        response = es.options(request_timeout=10).search(
+            index="catalog", body=build_search_request(query, "hybrid", 100)
         )
-        rows.append((qid, to_libsvm_row(label, qid, features)))
+        return response["hits"]["hits"]
 
-    rows.sort(key=lambda x: x[0])
-    return [row for _, row in rows]
-
-
-def split_and_write(
-    rows: list[str],
-    click_log: list[dict],
-    holdout_ratio: float = 0.2,
-    seed: int = 42,
-) -> None:
-    queries = list(dict.fromkeys(e["query"] for e in click_log))
-    query_to_qid = {q: i + 1 for i, q in enumerate(queries)}
-    qid_to_query = {v: k for k, v in query_to_qid.items()}
-
-    unique_qids = sorted(set(query_to_qid.values()))
-    random.seed(seed)
-    random.shuffle(unique_qids)
-
-    n_holdout = max(1, int(len(unique_qids) * holdout_ratio))
-    holdout_qids = set(unique_qids[:n_holdout])
-    train_qids = set(unique_qids[n_holdout:])
-
-    train_rows = [r for r in rows if int(r.split()[1].split(":")[1]) in train_qids]
-    holdout_rows = [r for r in rows if int(r.split()[1].split(":")[1]) in holdout_qids]
-
-    os.makedirs("data", exist_ok=True)
-    with open("data/train.libsvm", "w") as f:
-        f.write("\n".join(train_rows))
-    with open("data/holdout.libsvm", "w") as f:
-        f.write("\n".join(holdout_rows))
-
-    print(f"Train: {len(train_rows)} rows ({len(train_qids)} queries)")
-    print(f"Holdout: {len(holdout_rows)} rows ({len(holdout_qids)} queries)")
+    for split in splits:
+        cases = benchmark[split]
+        write_dataset(build_dataset(cases, catalog, retrieve), output_dir / f"{split}.libsvm")
+    (output_dir / "benchmark.json").parent.mkdir(parents=True, exist_ok=True)
+    (output_dir / "benchmark.json").write_text(json.dumps(benchmark, indent=2) + "\n")
+    return output_dir
 
 
 if __name__ == "__main__":
-    click_log = load_click_log()
-    catalog = load_catalog()
-    rows = build_dataset(click_log, catalog)
-    split_and_write(rows, click_log)
-    print("Written data/train.libsvm and data/holdout.libsvm")
+    from shared.es_client import get_client
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--split", choices=("train", "dev", "test"), action="append")
+    args = parser.parse_args()
+    directory = prepare_datasets(get_client(), splits=tuple(args.split or ("train", "dev", "test")))
+    print(f"Wrote ranking datasets to {directory}")

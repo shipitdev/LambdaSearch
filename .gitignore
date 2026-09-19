@@ -1,13 +1,15 @@
 .env
+.DS_Store
 data/
 models/
+.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
+node_modules/
 commit.js
+flix.py
 package.json
 package-lock.json
-node_modules/
-flix.py
 .gitignore

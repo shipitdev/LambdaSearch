@@ -2,8 +2,8 @@ import os
 import numpy as np
 import pytest
 import xgboost as xgb
-from train import get_groups, evaluate_on_holdout
-from shared.model_loader import save_model, load_model
+from train import get_groups
+from shared.model_loader import assert_model_compatible, save_model, load_model
 
 
 MINI_LIBSVM = """2 qid:1 0:2.0 1:299.99 2:1.43 3:4.2
@@ -42,19 +42,23 @@ def test_model_save_load(tmp_path, mini_libsvm_file):
     booster = xgb.train(params, dmat, num_boost_round=5, verbose_eval=False)
     original_preds = booster.predict(dmat)
 
-    os.makedirs("models", exist_ok=True)
-    save_model(booster, {"test": True})
-    loaded = load_model()
+    model_path = tmp_path / "model.json"
+    meta_path = tmp_path / "model_meta.json"
+    save_model(booster, {"test": True}, model_path=model_path, meta_path=meta_path)
+    loaded = load_model(model_path=model_path)
     loaded_preds = loaded.predict(dmat)
 
     np.testing.assert_array_almost_equal(original_preds, loaded_preds, decimal=5)
 
 
-def test_load_model_missing_raises():
-    if os.path.exists("models/model.json"):
-        pytest.skip("model exists, skipping missing-file test")
+def test_load_model_missing_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
-        load_model()
+        load_model(model_path=tmp_path / "missing.json")
+
+
+def test_model_metadata_rejects_an_unknown_feature_schema():
+    with pytest.raises(ValueError, match="feature schema"):
+        assert_model_compatible({"feature_schema": "old"}, "ranking-v1")
 
 
 def test_predictions_no_nans():

@@ -1,216 +1,177 @@
+"""Independent, reproducible evaluation for the ranking lab."""
+
+from __future__ import annotations
+
 import json
 import math
 import os
+from pathlib import Path
+
 import numpy as np
 import xgboost as xgb
-from shared.model_loader import load_model
+
+from catalog import load_catalog
+from shared.benchmark_data import build_benchmark
+from shared.features import compute_category_stats
+from shared.model_loader import load_model, load_model_metadata
+from shared.reranking import rerank_hits
+from shared.search import build_search_request
 
 
 def dcg(relevances: list[int], k: int) -> float:
-    total = 0.0
-    for i, rel in enumerate(relevances[:k]):
-        total += rel / math.log2(i + 2)
-    return total
+    return sum(rel / math.log2(position + 2) for position, rel in enumerate(relevances[:k]))
 
 
 def ideal_dcg(relevances: list[int], k: int) -> float:
-    sorted_rels = sorted(relevances, reverse=True)
-    return dcg(sorted_rels, k)
+    return dcg(sorted(relevances, reverse=True), k)
 
 
 def ndcg_at_k(relevances: list[int], k: int) -> float:
-    idcg = ideal_dcg(relevances, k)
-    if idcg == 0:
-        return 0.0
-    return dcg(relevances, k) / idcg
+    denominator = ideal_dcg(relevances, k)
+    return 0.0 if denominator == 0 else dcg(relevances, k) / denominator
 
 
 def mrr(relevances: list[int]) -> float:
-    for i, rel in enumerate(relevances):
-        if rel > 0:
-            return 1.0 / (i + 1)
+    for position, relevance in enumerate(relevances, start=1):
+        if relevance > 0:
+            return 1.0 / position
     return 0.0
 
 
+def recall_at_k(relevances: list[int], judgments: dict[str, int], k: int) -> float:
+    total_relevant = sum(label > 0 for label in judgments.values())
+    return 0.0 if total_relevant == 0 else sum(label > 0 for label in relevances[:k]) / total_relevant
+
+
 def evaluate_ranking(qid_groups: dict) -> dict:
-    ndcg10_scores, ndcg5_scores, mrr_scores = [], [], []
-    for qid, pairs in qid_groups.items():
-        pairs_sorted = sorted(pairs, key=lambda x: x[1], reverse=True)
-        relevances = [p[0] for p in pairs_sorted]
-        ndcg10_scores.append(ndcg_at_k(relevances, 10))
-        ndcg5_scores.append(ndcg_at_k(relevances, 5))
-        mrr_scores.append(mrr(relevances))
+    """Compatibility helper for small unit tests of score ordering."""
+    ranked = [sorted(pairs, key=lambda pair: pair[1], reverse=True) for pairs in qid_groups.values()]
+    relevances = [[label for label, _ in pairs] for pairs in ranked]
     return {
-        "ndcg@10": round(float(np.mean(ndcg10_scores)), 4),
-        "ndcg@5":  round(float(np.mean(ndcg5_scores)), 4),
-        "mrr":     round(float(np.mean(mrr_scores)), 4),
+        "ndcg@10": round(float(np.mean([ndcg_at_k(values, 10) for values in relevances])), 4),
+        "ndcg@5": round(float(np.mean([ndcg_at_k(values, 5) for values in relevances])), 4),
+        "mrr": round(float(np.mean([mrr(values) for values in relevances])), 4),
+        "recall@100": 0.0,
     }
 
 
-def load_holdout(path: str = "data/holdout.libsvm") -> tuple:
-    qids, labels = [], []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            parts = line.split()
-            labels.append(int(parts[0]))
-            qids.append(int(parts[1].split(":")[1]))
-    return qids, labels
+def paired_bootstrap_ci(
+    treatment: list[float], baseline: list[float], samples: int = 10_000, seed: int = 42
+) -> dict:
+    if len(treatment) != len(baseline) or not treatment:
+        raise ValueError("treatment and baseline must contain the same non-zero number of queries")
+    differences = np.asarray(treatment) - np.asarray(baseline)
+    rng = np.random.default_rng(seed)
+    draws = differences[rng.integers(0, len(differences), size=(samples, len(differences)))].mean(axis=1)
+    return {
+        "mean": round(float(differences.mean()), 10),
+        "lower": round(float(np.quantile(draws, 0.025)), 10),
+        "upper": round(float(np.quantile(draws, 0.975)), 10),
+    }
 
 
-def ltr_rankings(booster: xgb.Booster, holdout_path: str = "data/holdout.libsvm") -> dict:
-    qids, labels = load_holdout(holdout_path)
-    dmat = xgb.DMatrix(f"{holdout_path}?format=libsvm")
-    scores = booster.predict(dmat)
-
-    groups = {}
-    for qid, label, score in zip(qids, labels, scores):
-        if qid not in groups:
-            groups[qid] = []
-        groups[qid].append((label, float(score)))
-    return groups
+def strongest_baseline(mode_rows: dict[str, list[dict]]) -> str:
+    return max(
+        ("bm25", "semantic", "hybrid"),
+        key=lambda mode: float(np.mean([row["ndcg@10"] for row in mode_rows[mode]])),
+    )
 
 
-def bm25_rankings(es, holdout_path: str = "data/holdout.libsvm") -> dict:
-    from catalog import load_catalog
-    from shared.features import compute_category_stats
+def _search_many(es, cases: list[dict], mode: str, size: int = 100) -> list[list[dict]]:
+    searches = []
+    for case in cases:
+        searches.extend(({}, build_search_request(case["query"], mode, size)))
+    response = es.options(request_timeout=60).msearch(index="catalog", searches=searches)
+    return [item["hits"]["hits"] for item in response["responses"]]
 
+
+def _metrics_for_case(case: dict, hits: list[dict]) -> dict:
+    labels = [case["judgments"].get(hit["_source"].get("item_id"), 0) for hit in hits]
+    return {
+        "ndcg@10": ndcg_at_k(labels, 10),
+        "ndcg@5": ndcg_at_k(labels, 5),
+        "mrr": mrr(labels),
+        "recall@100": recall_at_k(labels, case["judgments"], 100),
+    }
+
+
+def _summarize(per_query: list[dict]) -> dict:
+    return {
+        metric: round(float(np.mean([row[metric] for row in per_query])), 4)
+        for metric in ("ndcg@10", "ndcg@5", "mrr", "recall@100")
+    }
+
+
+def run_evaluation(es, model_path: str | Path = "models/model.json") -> dict:
+    """Evaluate all modes on the same independent, held-out query set."""
     catalog = load_catalog()
-    catalog_by_id = {item["item_id"]: item for item in catalog}
+    cases = build_benchmark(catalog)["test"]
     category_stats = compute_category_stats(catalog)
+    model = load_model(model_path)
+    metadata = load_model_metadata()
+    modes = {"bm25": [], "semantic": [], "hybrid": [], "ltr": []}
 
-    qids, labels = load_holdout(holdout_path)
-
-    unique_qids = list(dict.fromkeys(qids))
-
-    with open("data/click_log.json") as f:
-        click_log = json.load(f)
-    qid_to_query = {}
-    seen = {}
-    for event in click_log:
-        q = event["query"]
-        if q not in seen:
-            seen[q] = len(seen) + 1
-        qid_to_query[seen[q]] = q
-
-    label_map = {}
-    for qid, label in zip(qids, labels):
-        if qid not in label_map:
-            label_map[qid] = {}
-
-    qid_item_labels = {}
-    with open("data/click_log.json") as f:
-        click_log = json.load(f)
-
-    queries_seen = {}
-    for event in click_log:
-        q = event["query"]
-        if q not in queries_seen:
-            queries_seen[q] = len(queries_seen) + 1
-        qid = queries_seen[q]
-        if qid not in unique_qids:
-            continue
-        key = (qid, event["item_id"])
-        if event["clicked"]:
-            qid_item_labels[key] = 2
-        elif key not in qid_item_labels:
-            qid_item_labels[key] = 1
-
-    groups = {}
-    for qid in unique_qids:
-        query = qid_to_query.get(qid)
-        if not query:
-            continue
-        resp = es.search(
-        index="catalog",
-        body={
-            "size": 50,  # fetch more than training saw — harder evaluation
-            "query": {
-                "multi_match": {
-                    "query": query,
-                    "fields": ["title^2", "description"],
-                    }
-                },
-            },
+    retrieved = {mode: _search_many(es, cases, mode) for mode in ("bm25", "semantic", "hybrid")}
+    for position, case in enumerate(cases):
+        for mode in ("bm25", "semantic", "hybrid"):
+            hits = retrieved[mode][position]
+            modes[mode].append({"query": case["query"], "cohort": case["cohort"], **_metrics_for_case(case, hits)})
+        ranked_hits = rerank_hits(
+            case["query"], retrieved["hybrid"][position], category_stats,
+            lambda rows: model.predict(xgb.DMatrix(rows)),
         )
-        pairs = []
-        for hit in resp["hits"]["hits"]:
-            item_id = hit["_source"].get("item_id")
-            bm25 = hit["_score"]
-            label = qid_item_labels.get((qid, item_id), 0)
-            pairs.append((label, bm25))
-        groups[qid] = pairs
-    return groups
+        modes["ltr"].append({"query": case["query"], "cohort": case["cohort"], **_metrics_for_case(case, ranked_hits)})
+
+    results = {mode: _summarize(rows) for mode, rows in modes.items()}
+    results["cohorts"] = {
+        cohort: {mode: _summarize([row for row in rows if row["cohort"] == cohort]) for mode, rows in modes.items()}
+        for cohort in ("lexical", "attribute", "semantic")
+    }
+    baseline = strongest_baseline(modes)
+    results["ltr_vs_strongest_baseline_ndcg@10"] = {
+        "baseline": baseline,
+        **paired_bootstrap_ci(
+        [row["ndcg@10"] for row in modes["ltr"]],
+        [row["ndcg@10"] for row in modes[baseline]],
+        ),
+    }
+    results["passed"] = results["ltr_vs_strongest_baseline_ndcg@10"]["lower"] > 0
+    results["queries"] = len(cases)
+    results["provenance"] = {
+        "benchmark": "ranking-v1",
+        "seed": 42,
+        "inference_id": os.getenv("ELASTIC_INFERENCE_ID"),
+        "model": metadata,
+    }
+    return results
 
 
-def run_evaluation(es) -> dict:
-    print("Evaluating LambdaMART on holdout...")
-    booster = load_model()
-    ltr_groups = ltr_rankings(booster)
-    ltr_metrics = evaluate_ranking(ltr_groups)
-    print(f"LambdaMART: {ltr_metrics}")
-
-    print("Evaluating BM25 on holdout queries...")
-    bm25_groups = bm25_rankings(es)
-    bm25_metrics = evaluate_ranking(bm25_groups)
-    print(f"BM25: {bm25_metrics}")
-
-    return {"bm25": bm25_metrics, "lambdamart": ltr_metrics}
-
-
-def write_results(results: dict) -> None:
-    os.makedirs("results", exist_ok=True)
-
-    with open("results/metrics.json", "w") as f:
-        json.dump(results, f, indent=2)
-
-    bm25 = results["bm25"]
-    ltr = results["lambdamart"]
-
-    import json as _json
-    n_events = len(_json.load(open("data/click_log.json")))
-
-    md = f"""# LaMDaSearch Benchmark Results
-
-## BM25 vs LambdaMART on Held-Out Query Set
-
-| Metric   | BM25   | LambdaMART | Delta |
-|----------|--------|------------|-------|
-| NDCG@10  | {bm25['ndcg@10']:.4f} | {ltr['ndcg@10']:.4f} | {ltr['ndcg@10'] - bm25['ndcg@10']:+.4f} |
-| NDCG@5   | {bm25['ndcg@5']:.4f}  | {ltr['ndcg@5']:.4f}  | {ltr['ndcg@5']  - bm25['ndcg@5']:+.4f}  |
-| MRR      | {bm25['mrr']:.4f}     | {ltr['mrr']:.4f}     | {ltr['mrr']     - bm25['mrr']:+.4f}     |
-
-## Notes
-
-Training data: {n_events:,} synthetic click events across {len(set())} queries.
-Click simulation uses position bias (1/(1+rank)) and popularity bias (2x CTR for top 10% items).
-Evaluation on held-out query set not seen during training.
-
-## Honest Assessment
-
-Both systems score highly because the synthetic click simulator generates clicks
-that are strongly correlated with BM25 ranking order — users click higher-ranked
-BM25 results more often by design (position bias). This means BM25 already
-produces a near-optimal ordering for the simulated users, leaving little room
-for LTR to improve.
-
-In production with real user data, LTR improves over BM25 by capturing signals
-BM25 cannot: user intent beyond keyword match, item popularity independent of
-text relevance, price sensitivity, and session context. The pipeline here
-demonstrates the correct architecture for capturing those signals when real
-behavioral data is available.
-"""
-
-    with open("results/benchmark.md", "w") as f:
-        f.write(md)
-
-    print("Results written to results/metrics.json and results/benchmark.md")
+def write_results(results: dict, output_dir: str | Path = "results") -> None:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "metrics.json").write_text(json.dumps(results, indent=2) + "\n")
+    rows = "\n".join(
+        f"| {mode} | {metrics['ndcg@10']:.4f} | {metrics['ndcg@5']:.4f} | {metrics['mrr']:.4f} | {metrics['recall@100']:.4f} |"
+        for mode, metrics in results.items() if mode in {"bm25", "semantic", "hybrid", "ltr"}
+    )
+    ci = results["ltr_vs_strongest_baseline_ndcg@10"]
+    verdict = "PASS" if results["passed"] else "NOT READY"
+    (output_dir / "benchmark.md").write_text(
+        "# LaMDaSearch Benchmark Results\n\n"
+        f"Held-out queries: {results['queries']}\n\n"
+        f"Benchmark: {results['provenance']['benchmark']} (seed {results['provenance']['seed']})\n\n"
+        "| Mode | NDCG@10 | NDCG@5 | MRR | Recall@100 |\n|---|---:|---:|---:|---:|\n"
+        f"{rows}\n\n"
+        f"## LTR vs Strongest First-Stage Baseline ({ci['baseline']})\n\n"
+        f"Paired bootstrap NDCG@10 lift (95% CI): {ci['mean']:+.4f} "
+        f"[{ci['lower']:+.4f}, {ci['upper']:+.4f}]\n\n"
+        f"**Verdict: {verdict}**\n"
+    )
 
 
 if __name__ == "__main__":
     from shared.es_client import get_client
-    es = get_client()
-    results = run_evaluation(es)
+
+    results = run_evaluation(get_client())
     write_results(results)
+    print("PASS" if results["passed"] else "NOT READY")

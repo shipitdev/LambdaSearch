@@ -1,73 +1,66 @@
-import json
-import numpy as np
+"""Train LambdaMART from the independent RRF-candidate dataset."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from datetime import datetime, timezone
+
 import xgboost as xgb
-from datetime import datetime
+from dotenv import load_dotenv
+
+from shared.features import FEATURE_SCHEMA_VERSION
 from shared.model_loader import save_model
 
+load_dotenv()
 
-def load_libsvm(path: str) -> xgb.DMatrix:
-    return xgb.DMatrix(f"{path}?format=libsvm")
+
+def source_revision() -> str:
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 
 
 def get_groups(path: str) -> list[int]:
-    qid_counts = {}
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            qid = int(line.split()[1].split(":")[1])
-            qid_counts[qid] = qid_counts.get(qid, 0) + 1
-    return list(qid_counts.values())
+    counts: dict[int, int] = {}
+    with open(path) as handle:
+        for line in handle:
+            if line.strip():
+                qid = int(line.split()[1].split(":")[1])
+                counts[qid] = counts.get(qid, 0) + 1
+    return list(counts.values())
 
 
-def train(train_path: str = "data/train.libsvm") -> xgb.Booster:
-    print("Loading training data...")
-    dtrain = xgb.DMatrix(f"{train_path}?format=libsvm")
-    groups = get_groups(train_path)
-    dtrain.set_group(groups)
+def _matrix(path: str) -> xgb.DMatrix:
+    matrix = xgb.DMatrix(f"{path}?format=libsvm")
+    matrix.set_group(get_groups(path))
+    return matrix
 
+
+def train(train_path: str = "data/ranking-v1/train.libsvm", dev_path: str = "data/ranking-v1/dev.libsvm") -> xgb.Booster:
     params = {
         "objective": "rank:ndcg",
         "eval_metric": "ndcg@10",
         "max_depth": 6,
         "learning_rate": 0.1,
         "tree_method": "hist",
+        "nthread": 1,
         "seed": 42,
     }
-
-    print("Training LambdaMART model...")
-    booster = xgb.train(
+    return xgb.train(
         params,
-        dtrain,
+        _matrix(train_path),
         num_boost_round=100,
-        evals=[(dtrain, "train")],
+        evals=[(_matrix(dev_path), "dev")],
         verbose_eval=10,
     )
-    return booster
-
-
-def evaluate_on_holdout(booster: xgb.Booster, holdout_path: str = "data/holdout.libsvm") -> float:
-    dholdout = xgb.DMatrix(f"{holdout_path}?format=libsvm")
-    groups = get_groups(holdout_path)
-    dholdout.set_group(groups)
-    scores = booster.predict(dholdout)
-    print(f"Generated {len(scores)} predictions on holdout set.")
-    return float(np.mean(scores))
 
 
 if __name__ == "__main__":
     booster = train()
-    mean_score = evaluate_on_holdout(booster)
-    meta = {
-        "trained_at": datetime.now().isoformat(),
-        "params": {
-            "objective": "rank:ndcg",
-            "max_depth": 6,
-            "learning_rate": 0.1,
-            "num_boost_round": 100,
-        },
-        "mean_holdout_score": mean_score,
-    }
-    save_model(booster, meta)
-    print(f"Done. Mean holdout prediction score: {mean_score:.4f}")
+    save_model(booster, {
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+        "feature_schema": FEATURE_SCHEMA_VERSION,
+        "dataset": "ranking-v1",
+        "seed": 42,
+        "inference_id": os.getenv("ELASTIC_INFERENCE_ID"),
+        "source_revision": source_revision(),
+    })

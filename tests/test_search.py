@@ -36,8 +36,8 @@ KNOWN_ITEMS = [
 
 @pytest.fixture(scope="module")
 def client():
-    if not os.getenv("ES_URL"):
-        pytest.skip("ES_URL not set")
+    if os.getenv("RUN_ES_TESTS") != "1":
+        pytest.skip("set RUN_ES_TESTS=1 to run Elastic integration tests")
     try:
         with TestClient(app) as c:
             yield c

@@ -1,9 +1,14 @@
-import os
-import json
-import pytest
 import math
-from evaluate import dcg, ideal_dcg, ndcg_at_k, mrr, evaluate_ranking, load_holdout, ltr_rankings
-from shared.model_loader import load_model
+from evaluate import (
+    dcg,
+    ideal_dcg,
+    ndcg_at_k,
+    mrr,
+    evaluate_ranking,
+    paired_bootstrap_ci,
+    recall_at_k,
+    strongest_baseline,
+)
 
 
 
@@ -54,48 +59,27 @@ def test_evaluate_ranking_structure():
     assert "ndcg@10" in result
     assert "ndcg@5" in result
     assert "mrr" in result
+    assert "recall@100" in result
     assert 0.0 <= result["ndcg@10"] <= 1.0
     assert 0.0 <= result["ndcg@5"] <= 1.0
     assert 0.0 <= result["mrr"] <= 1.0
+    assert 0.0 <= result["recall@100"] <= 1.0
 
 
-def test_load_holdout_structure():
-    if not os.path.exists("data/holdout.libsvm"):
-        pytest.skip("holdout.libsvm not generated yet")
-    qids, labels = load_holdout()
-    assert len(qids) == len(labels)
-    assert all(l in [0, 1, 2] for l in labels)
-    assert len(set(qids)) >= 1
+def test_recall_counts_relevant_items_retrieved():
+    assert recall_at_k([3, 0, 2], {"a": 3, "b": 2, "c": 2}, 3) == 2 / 3
 
 
-def test_ltr_rankings_structure():
-    if not os.path.exists("data/holdout.libsvm"):
-        pytest.skip("holdout.libsvm not generated yet")
-    if not os.path.exists("models/model.json"):
-        pytest.skip("model not trained yet")
-    booster = load_model()
-    groups = ltr_rankings(booster)
-    assert len(groups) > 0
-    for qid, pairs in groups.items():
-        assert len(pairs) > 0
-        for label, score in pairs:
-            assert label in [0, 1, 2]
-            assert isinstance(score, float)
+def test_paired_bootstrap_ci_detects_consistent_lift():
+    ci = paired_bootstrap_ci([0.4, 0.5, 0.6], [0.3, 0.4, 0.5], samples=500, seed=42)
+    assert ci["lower"] > 0
+    assert ci["mean"] == 0.1
 
 
-@pytest.mark.skipif(not os.getenv("ES_URL"), reason="ES_URL not set")
-def test_full_benchmark():
-    try:
-        from shared.es_client import get_client
-        from evaluate import run_evaluation, write_results
-        es = get_client()
-        results = run_evaluation(es)
-        write_results(results)
-        assert "bm25" in results
-        assert "lambdamart" in results
-        assert 0.0 <= results["bm25"]["ndcg@10"] <= 1.0
-        assert 0.0 <= results["lambdamart"]["ndcg@10"] <= 1.0
-        assert results["lambdamart"]["ndcg@10"] >= results["bm25"]["ndcg@10"], \
-            f"LambdaMART ({results['lambdamart']['ndcg@10']}) should beat BM25 ({results['bm25']['ndcg@10']})"
-    except Exception as e:
-        pytest.skip(f"ES unavailable: {e}")
+def test_strongest_baseline_is_selected_from_per_query_scores():
+    mode_rows = {
+        "bm25": [{"ndcg@10": 0.7}],
+        "semantic": [{"ndcg@10": 0.9}],
+        "hybrid": [{"ndcg@10": 0.8}],
+    }
+    assert strongest_baseline(mode_rows) == "semantic"
