@@ -37,3 +37,8 @@ def load_model_metadata(meta_path: str | Path = DEFAULT_META_PATH) -> dict:
         raise FileNotFoundError(f"{meta_path} not found — run train.py first.")
     with meta_path.open() as f:
         return json.load(f)
+
+
+def assert_model_compatible(metadata: dict, feature_schema: str) -> None:
+    if metadata.get("feature_schema") != feature_schema:
+        raise ValueError("LTR model feature schema does not match this service")

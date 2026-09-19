@@ -1,4 +1,4 @@
-import json
+FEATURE_SCHEMA_VERSION = "ranking-v1"
 
 
 def query_length(query: str) -> int:

@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from catalog import load_catalog
 from shared.es_client import check_connection, get_client
-from shared.features import compute_category_stats
-from shared.model_loader import load_model
+from shared.features import FEATURE_SCHEMA_VERSION, compute_category_stats
+from shared.model_loader import assert_model_compatible, load_model, load_model_metadata
 from shared.reranking import rerank_hits
 from shared.search import build_search_request
 
@@ -43,9 +43,10 @@ def _rerank(query: str, hits: list[dict]) -> list[dict]:
     try:
         import xgboost as xgb
 
+        assert_model_compatible(load_model_metadata(), FEATURE_SCHEMA_VERSION)
         model = load_model()
         return rerank_hits(query, hits, category_stats, lambda rows: model.predict(xgb.DMatrix(rows)))
-    except FileNotFoundError as error:
+    except (FileNotFoundError, ValueError) as error:
         raise HTTPException(status_code=503, detail="LTR model is not available") from error
 
 
@@ -59,10 +60,9 @@ def search(
     if es is None:
         raise HTTPException(status_code=503, detail="Search backend unavailable")
     try:
-        response = es.search(
+        response = es.options(request_timeout=5).search(
             index="catalog",
             body=build_search_request(q, mode, page_size, (page - 1) * page_size),
-            request_timeout=5,
         )
     except Exception as error:
         raise HTTPException(status_code=503, detail="Search backend unavailable") from error

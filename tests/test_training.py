@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 import xgboost as xgb
 from train import get_groups
-from shared.model_loader import save_model, load_model
+from shared.model_loader import assert_model_compatible, save_model, load_model
 
 
 MINI_LIBSVM = """2 qid:1 0:2.0 1:299.99 2:1.43 3:4.2
@@ -54,6 +54,11 @@ def test_model_save_load(tmp_path, mini_libsvm_file):
 def test_load_model_missing_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_model(model_path=tmp_path / "missing.json")
+
+
+def test_model_metadata_rejects_an_unknown_feature_schema():
+    with pytest.raises(ValueError, match="feature schema"):
+        assert_model_compatible({"feature_schema": "old"}, "ranking-v1")
 
 
 def test_predictions_no_nans():
