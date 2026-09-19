@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -33,7 +34,7 @@ def write_dataset(rows: list[str], path: str | Path) -> None:
     path.write_text("\n".join(rows) + "\n")
 
 
-def prepare_datasets(es, output_dir: str | Path = "data/ranking-v1") -> Path:
+def prepare_datasets(es, output_dir: str | Path = "data/ranking-v1", splits: tuple[str, ...] = ("train", "dev", "test")) -> Path:
     """Retrieve candidates once and write query-disjoint train/dev/test files."""
     catalog = load_catalog()
     benchmark = build_benchmark(catalog)
@@ -45,7 +46,8 @@ def prepare_datasets(es, output_dir: str | Path = "data/ranking-v1") -> Path:
         )
         return response["hits"]["hits"]
 
-    for split, cases in benchmark.items():
+    for split in splits:
+        cases = benchmark[split]
         write_dataset(build_dataset(cases, catalog, retrieve), output_dir / f"{split}.libsvm")
     (output_dir / "benchmark.json").parent.mkdir(parents=True, exist_ok=True)
     (output_dir / "benchmark.json").write_text(json.dumps(benchmark, indent=2) + "\n")
@@ -55,5 +57,8 @@ def prepare_datasets(es, output_dir: str | Path = "data/ranking-v1") -> Path:
 if __name__ == "__main__":
     from shared.es_client import get_client
 
-    directory = prepare_datasets(get_client())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--split", choices=("train", "dev", "test"), action="append")
+    args = parser.parse_args()
+    directory = prepare_datasets(get_client(), splits=tuple(args.split or ("train", "dev", "test")))
     print(f"Wrote ranking datasets to {directory}")

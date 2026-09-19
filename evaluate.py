@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -12,7 +13,7 @@ import xgboost as xgb
 from catalog import load_catalog
 from shared.benchmark_data import build_benchmark
 from shared.features import compute_category_stats
-from shared.model_loader import load_model
+from shared.model_loader import load_model, load_model_metadata
 from shared.reranking import rerank_hits
 from shared.search import build_search_request
 
@@ -69,11 +70,19 @@ def paired_bootstrap_ci(
     }
 
 
-def _search(es, query: str, mode: str, size: int = 100) -> list[dict]:
-    response = es.options(request_timeout=10).search(
-        index="catalog", body=build_search_request(query, mode, size)
+def strongest_baseline(mode_rows: dict[str, list[dict]]) -> str:
+    return max(
+        ("bm25", "semantic", "hybrid"),
+        key=lambda mode: float(np.mean([row["ndcg@10"] for row in mode_rows[mode]])),
     )
-    return response["hits"]["hits"]
+
+
+def _search_many(es, cases: list[dict], mode: str, size: int = 100) -> list[list[dict]]:
+    searches = []
+    for case in cases:
+        searches.extend(({}, build_search_request(case["query"], mode, size)))
+    response = es.options(request_timeout=60).msearch(index="catalog", searches=searches)
+    return [item["hits"]["hits"] for item in response["responses"]]
 
 
 def _metrics_for_case(case: dict, hits: list[dict]) -> dict:
@@ -99,17 +108,16 @@ def run_evaluation(es, model_path: str | Path = "models/model.json") -> dict:
     cases = build_benchmark(catalog)["test"]
     category_stats = compute_category_stats(catalog)
     model = load_model(model_path)
+    metadata = load_model_metadata()
     modes = {"bm25": [], "semantic": [], "hybrid": [], "ltr": []}
 
-    for case in cases:
-        hybrid_hits = None
+    retrieved = {mode: _search_many(es, cases, mode) for mode in ("bm25", "semantic", "hybrid")}
+    for position, case in enumerate(cases):
         for mode in ("bm25", "semantic", "hybrid"):
-            hits = _search(es, case["query"], mode)
+            hits = retrieved[mode][position]
             modes[mode].append({"query": case["query"], "cohort": case["cohort"], **_metrics_for_case(case, hits)})
-            if mode == "hybrid":
-                hybrid_hits = hits
         ranked_hits = rerank_hits(
-            case["query"], hybrid_hits, category_stats,
+            case["query"], retrieved["hybrid"][position], category_stats,
             lambda rows: model.predict(xgb.DMatrix(rows)),
         )
         modes["ltr"].append({"query": case["query"], "cohort": case["cohort"], **_metrics_for_case(case, ranked_hits)})
@@ -119,12 +127,22 @@ def run_evaluation(es, model_path: str | Path = "models/model.json") -> dict:
         cohort: {mode: _summarize([row for row in rows if row["cohort"] == cohort]) for mode, rows in modes.items()}
         for cohort in ("lexical", "attribute", "semantic")
     }
-    results["ltr_vs_hybrid_ndcg@10"] = paired_bootstrap_ci(
+    baseline = strongest_baseline(modes)
+    results["ltr_vs_strongest_baseline_ndcg@10"] = {
+        "baseline": baseline,
+        **paired_bootstrap_ci(
         [row["ndcg@10"] for row in modes["ltr"]],
-        [row["ndcg@10"] for row in modes["hybrid"]],
-    )
-    results["passed"] = results["ltr_vs_hybrid_ndcg@10"]["lower"] > 0
+        [row["ndcg@10"] for row in modes[baseline]],
+        ),
+    }
+    results["passed"] = results["ltr_vs_strongest_baseline_ndcg@10"]["lower"] > 0
     results["queries"] = len(cases)
+    results["provenance"] = {
+        "benchmark": "ranking-v1",
+        "seed": 42,
+        "inference_id": os.getenv("ELASTIC_INFERENCE_ID"),
+        "model": metadata,
+    }
     return results
 
 
@@ -136,14 +154,15 @@ def write_results(results: dict, output_dir: str | Path = "results") -> None:
         f"| {mode} | {metrics['ndcg@10']:.4f} | {metrics['ndcg@5']:.4f} | {metrics['mrr']:.4f} | {metrics['recall@100']:.4f} |"
         for mode, metrics in results.items() if mode in {"bm25", "semantic", "hybrid", "ltr"}
     )
-    ci = results["ltr_vs_hybrid_ndcg@10"]
+    ci = results["ltr_vs_strongest_baseline_ndcg@10"]
     verdict = "PASS" if results["passed"] else "NOT READY"
     (output_dir / "benchmark.md").write_text(
         "# LaMDaSearch Benchmark Results\n\n"
         f"Held-out queries: {results['queries']}\n\n"
+        f"Benchmark: {results['provenance']['benchmark']} (seed {results['provenance']['seed']})\n\n"
         "| Mode | NDCG@10 | NDCG@5 | MRR | Recall@100 |\n|---|---:|---:|---:|---:|\n"
         f"{rows}\n\n"
-        "## LTR vs Hybrid RRF\n\n"
+        f"## LTR vs Strongest First-Stage Baseline ({ci['baseline']})\n\n"
         f"Paired bootstrap NDCG@10 lift (95% CI): {ci['mean']:+.4f} "
         f"[{ci['lower']:+.4f}, {ci['upper']:+.4f}]\n\n"
         f"**Verdict: {verdict}**\n"

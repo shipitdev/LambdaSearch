@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from datetime import datetime, timezone
 
 import xgboost as xgb
 
 from shared.features import FEATURE_SCHEMA_VERSION
 from shared.model_loader import save_model
+
+
+def source_revision() -> str:
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 
 
 def get_groups(path: str) -> list[int]:
@@ -53,4 +58,5 @@ if __name__ == "__main__":
         "dataset": "ranking-v1",
         "seed": 42,
         "inference_id": os.getenv("ELASTIC_INFERENCE_ID"),
+        "source_revision": source_revision(),
     })

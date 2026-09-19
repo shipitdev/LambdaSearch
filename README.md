@@ -49,6 +49,20 @@ Cloud integration tests are opt-in and require reachable credentials:
 RUN_ES_TESTS=1 PYTHONPATH=. .venv/bin/pytest tests/ -q
 ```
 
+Build and assess the ranking model with the same deterministic catalog used by
+the benchmark:
+
+```bash
+PYTHONPATH=. .venv/bin/python to_libsvm.py
+PYTHONPATH=. .venv/bin/python train.py
+PYTHONPATH=. .venv/bin/python evaluate.py
+```
+
+The final command writes `results/metrics.json` and `results/benchmark.md`.
+`NOT READY` is a valid result: it means LTR did not demonstrate a statistically
+reliable NDCG@10 improvement over the strongest of BM25, semantic, and hybrid
+retrieval.
+
 ## Evaluation standard
 
 The release gate is a reproducible held-out benchmark where LambdaMART has a

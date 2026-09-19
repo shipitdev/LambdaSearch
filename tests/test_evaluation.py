@@ -7,6 +7,7 @@ from evaluate import (
     evaluate_ranking,
     paired_bootstrap_ci,
     recall_at_k,
+    strongest_baseline,
 )
 
 
@@ -73,3 +74,12 @@ def test_paired_bootstrap_ci_detects_consistent_lift():
     ci = paired_bootstrap_ci([0.4, 0.5, 0.6], [0.3, 0.4, 0.5], samples=500, seed=42)
     assert ci["lower"] > 0
     assert ci["mean"] == 0.1
+
+
+def test_strongest_baseline_is_selected_from_per_query_scores():
+    mode_rows = {
+        "bm25": [{"ndcg@10": 0.7}],
+        "semantic": [{"ndcg@10": 0.9}],
+        "hybrid": [{"ndcg@10": 0.8}],
+    }
+    assert strongest_baseline(mode_rows) == "semantic"
