@@ -1,6 +1,13 @@
+from inspect import signature
+
 import pytest
 
+from api import search
 from shared.search import build_search_request
+
+
+def test_semantic_is_the_default_api_mode():
+    assert signature(search).parameters["mode"].default == "semantic"
 
 
 def test_bm25_request_uses_lexical_fields():

@@ -18,10 +18,12 @@ prevents the position-bias leakage present in click-derived labels.
 
 `GET /search?q=audio%20for%20commuting&mode=bm25|semantic|hybrid|ltr`
 
-- `bm25` is the backward-compatible default.
+- `semantic` is the default because it is the strongest first-stage mode in the
+  current held-out benchmark.
+- `bm25` remains available as the lexical baseline.
 - `semantic` and `hybrid` require an Elastic `semantic_text` inference endpoint.
-- `ltr` reranks hybrid candidates with `models/model.json`; it returns 503 when
-  no compatible trained model is available.
+- `ltr` is experimental: it reranks hybrid candidates with
+  `models/model.json` and returns 503 when no compatible model is available.
 
 ## Setup
 

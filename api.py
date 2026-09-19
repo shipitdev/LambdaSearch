@@ -53,7 +53,7 @@ def _rerank(query: str, hits: list[dict]) -> list[dict]:
 @app.get("/search")
 def search(
     q: str = Query(..., min_length=1, max_length=256, description="Search query"),
-    mode: Mode = "bm25",
+    mode: Mode = "semantic",
     page: int = Query(1, ge=1, le=100),
     page_size: int = Query(10, ge=1, le=50),
 ):
