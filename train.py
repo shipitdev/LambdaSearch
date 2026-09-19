@@ -7,9 +7,12 @@ import subprocess
 from datetime import datetime, timezone
 
 import xgboost as xgb
+from dotenv import load_dotenv
 
 from shared.features import FEATURE_SCHEMA_VERSION
 from shared.model_loader import save_model
+
+load_dotenv()
 
 
 def source_revision() -> str:
@@ -39,6 +42,7 @@ def train(train_path: str = "data/ranking-v1/train.libsvm", dev_path: str = "dat
         "max_depth": 6,
         "learning_rate": 0.1,
         "tree_method": "hist",
+        "nthread": 1,
         "seed": 42,
     }
     return xgb.train(
