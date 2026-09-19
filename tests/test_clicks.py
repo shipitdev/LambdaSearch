@@ -1,7 +1,7 @@
 import os
 import json
 import pytest
-from simulate_clicks import position_bias, load_popular_items, simulate_session, run_simulation
+from simulate_clicks import position_bias, load_popular_items, prefetch_query_results, simulate_session, run_simulation
 from shared.es_client import get_client
 
 
@@ -30,12 +30,15 @@ def test_popular_items_fraction():
 def test_popular_items_higher_ctr():
     es = get_client()
     popular_items = load_popular_items(fraction=0.1)
+    cached_results = prefetch_query_results(es, ["wireless headphones"]).get("wireless headphones", [])
+    if not cached_results:
+        pytest.skip("No results for test query")
 
     popular_clicks, popular_shown = 0, 0
     other_clicks, other_shown = 0, 0
 
     for _ in range(100):
-        events = simulate_session(es, "wireless headphones", popular_items)
+        events = simulate_session("wireless headphones", cached_results, popular_items)
         for e in events:
             if e["position"] != 0:
                 continue  # control for rank, only compare same position
