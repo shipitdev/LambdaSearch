@@ -64,6 +64,10 @@ The final command writes `results/metrics.json` and `results/benchmark.md`.
 `NOT READY` is a valid result: it means LTR did not demonstrate a statistically
 reliable NDCG@10 improvement over the strongest of BM25, semantic, and hybrid
 retrieval.
+NDCG@10 uses every judged product to define the ideal top ten, but cannot
+measure relevant products missed beyond that cutoff; read it alongside
+Recall@100. Every held-out query currently has at least 19 highest-grade
+products, which makes perfect top-ten scores possible despite low recall.
 
 ## Evaluation standard
 

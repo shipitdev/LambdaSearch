@@ -166,6 +166,9 @@ def write_results(results: dict, output_dir: str | Path = "results") -> None:
         f"## LTR vs Strongest First-Stage Baseline ({ci['baseline']})\n\n"
         f"Paired bootstrap NDCG@10 lift (95% CI): {ci['mean']:+.4f} "
         f"[{ci['lower']:+.4f}, {ci['upper']:+.4f}]\n\n"
+        "NDCG uses all judged products for its ideal ranking, but only scores the "
+        "first ten results. High NDCG@10 can therefore coexist with low Recall@100 "
+        "when many products are equally relevant.\n\n"
         f"**Verdict: {verdict}**\n"
     )
 
