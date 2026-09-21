@@ -26,8 +26,8 @@ def ideal_dcg(relevances: list[int], k: int) -> float:
     return dcg(sorted(relevances, reverse=True), k)
 
 
-def ndcg_at_k(relevances: list[int], k: int) -> float:
-    denominator = ideal_dcg(relevances, k)
+def ndcg_at_k(relevances: list[int], k: int, all_relevances: list[int] | None = None) -> float:
+    denominator = ideal_dcg(all_relevances if all_relevances is not None else relevances, k)
     return 0.0 if denominator == 0 else dcg(relevances, k) / denominator
 
 
@@ -87,9 +87,10 @@ def _search_many(es, cases: list[dict], mode: str, size: int = 100) -> list[list
 
 def _metrics_for_case(case: dict, hits: list[dict]) -> dict:
     labels = [case["judgments"].get(hit["_source"].get("item_id"), 0) for hit in hits]
+    all_labels = list(case["judgments"].values())
     return {
-        "ndcg@10": ndcg_at_k(labels, 10),
-        "ndcg@5": ndcg_at_k(labels, 5),
+        "ndcg@10": ndcg_at_k(labels, 10, all_labels),
+        "ndcg@5": ndcg_at_k(labels, 5, all_labels),
         "mrr": mrr(labels),
         "recall@100": recall_at_k(labels, case["judgments"], 100),
     }

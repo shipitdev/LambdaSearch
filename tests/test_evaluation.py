@@ -8,6 +8,7 @@ from evaluate import (
     paired_bootstrap_ci,
     recall_at_k,
     strongest_baseline,
+    _metrics_for_case,
 )
 
 
@@ -30,6 +31,13 @@ def test_ndcg_all_zeros():
 def test_ndcg_single_relevant():
     relevances = [2, 0, 0]
     assert ndcg_at_k(relevances, 3) == 1.0
+
+
+def test_missing_relevant_product_lowers_case_ndcg():
+    case = {"judgments": {"found": 3, "missed": 3}}
+    hits = [{"_source": {"item_id": "found"}}]
+
+    assert _metrics_for_case(case, hits)["ndcg@10"] == dcg([3], 10) / ideal_dcg([3, 3], 10)
 
 
 def test_mrr_first_position():
